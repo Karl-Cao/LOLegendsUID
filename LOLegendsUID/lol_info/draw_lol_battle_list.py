@@ -6,6 +6,8 @@ from gsuid_core.models import Event
 from gsuid_core.utils.image.convert import convert_img
 from gsuid_core.utils.fonts.fonts import core_font as cf
 
+from ..utils.public_bot.team_performance import draw_team_performance_panel
+from ..utils.public_bot.match_layout import ordered_match_teams
 from ..utils.lol_api import wg_api
 from ..utils.error_reply import get_error
 from .draw_lol_info_pic import (
@@ -55,7 +57,7 @@ async def draw_lol_battle_list_img(ev: Event, uid: str) -> Union[str, bytes]:
     else:
         h = len(battle_list_data) * 250 + 500 + 40
 
-    img = Image.new('RGBA', (900, h), rgb_value)
+    img = Image.new('RGBA', (900, h + 55), rgb_value)
     img.paste(bg, (0, 0), bg)
     img.paste(title, (0, 0), title)
 
@@ -84,21 +86,21 @@ async def draw_lol_battle_list_img(ev: Event, uid: str) -> Union[str, bytes]:
         if isinstance(detail, int):
             continue
 
-        for i, team in enumerate(detail['team_details']):
-            # 官方已删除该参数
-            # team_elo = team['teamElo']
-            team_elo = '已隐藏'
-            team_gold = team['totalGoldEarned']
-            team_word = Image.open(TEXT_PATH / "team_word.png")
-            team_draw = ImageDraw.Draw(team_word)
-            team_draw.text((98, 20), f'{team_elo}', 'white', cf(25), 'lm')
-            team_draw.text((106, 55), f'{team_gold}', 'white', cf(25), 'lm')
+        ordered_teams = ordered_match_teams(detail, _id)
+        if ordered_teams is None:
+            continue
+        display_rows = {str(team['teamId']): i for i, team in enumerate(ordered_teams)}
+        positions = {team_id: -1 for team_id in display_rows}
+        for i, team in enumerate(ordered_teams):
+            panel_size = Image.open(TEXT_PATH / "team_word.png").size
+            team_word = draw_team_performance_panel(panel_size, detail, team, cf, '我方' if i == 0 else '对方')
             battle_bg.paste(team_word, (626, 68 + 88 * i), team_word)
 
-        team_a_num = -1
-        team_b_num = -1
-
         for player in detail['player_details']:
+            team_id = str(player['teamId'])
+            if team_id not in display_rows:
+                continue
+            positions[team_id] += 1
             player_id = player['openid']
             hero_id = player['championId']
             is_mvp = True if player['battleHonour']['isMvp'] else False
@@ -112,12 +114,10 @@ async def draw_lol_battle_list_img(ev: Event, uid: str) -> Union[str, bytes]:
             hero_pic = Image.new('RGBA', (100, 100), (0, 0, 0, 0))
             hero_pic.paste(hero_img, (13, 13), hero_img)
 
-            if player['teamId'] == '100':
+            if team_id == '100':
                 hero_pic.paste(team_a_icon, (0, 0), team_a_icon)
-                team_a_num += 1
             else:
                 hero_pic.paste(team_b_icon, (0, 0), team_b_icon)
-                team_b_num += 1
 
             hero_draw = ImageDraw.Draw(hero_pic)
             hero_draw.text((50, 77), f'{K}/{D}/{A}', 'white', cf(18), 'mm')
@@ -130,14 +130,9 @@ async def draw_lol_battle_list_img(ev: Event, uid: str) -> Union[str, bytes]:
             if _id == player_id:
                 me_icon = hero_pic
 
-            if player['teamId'] == '100':
-                battle_bg.paste(
-                    hero_pic, (178 + 88 * team_a_num, 54), hero_pic
-                )
-            else:
-                battle_bg.paste(
-                    hero_pic, (178 + 88 * team_b_num, 145), hero_pic
-                )
+            battle_bg.paste(
+                hero_pic, (178 + 88 * positions[team_id], 54 + 91 * display_rows[team_id]), hero_pic
+            )
 
         me_icon = me_icon.resize((120, 120))
         battle_bg.paste(me_icon, (56, 51), me_icon)
@@ -151,4 +146,6 @@ async def draw_lol_battle_list_img(ev: Event, uid: str) -> Union[str, bytes]:
     footer = Image.open(TEXT_PATH / 'footer.png')
     img.paste(footer, (0, h - 55), footer)
 
+    note = ImageDraw.Draw(img)
+    note.text((450, h + 25), 'Akari参考单场评分（非Elo）· 缺项不计分 · 仅比较同场两队', S, cf(19), 'mm')
     return await convert_img(img)
